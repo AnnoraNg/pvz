@@ -1947,7 +1947,19 @@ let guestSide='zombies';
 let lobbyLevel=0;
 let netCode='';
 let lastSnap=0;
+let connectTimer=null;
 const LOBBY_BTNS=[];
+
+// ICE servers: STUN helps peers discover their public address; TURN relays the
+// data when a direct peer-to-peer link can't punch through (different networks,
+// strict/symmetric NAT, cellular). Without TURN, cross-network games often hang.
+const PEER_OPTS = { config: { iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'turn:openrelay.metered.ca:80',  username:'openrelayproject', credential:'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
+] } };
 
 function genCode(){
   const A='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
@@ -1959,7 +1971,7 @@ function netSend(obj){ try{ if(conn && conn.open) conn.send(obj); }catch(e){} }
 function netHost(){ netRole='host'; netConnected=false; tryHostPeer(0); }
 function tryHostPeer(attempt){
   netCode=genCode(); netStatus='Creating room…';
-  try{ peer = new Peer('pvz2p-'+netCode); }catch(e){ netStatus='PeerJS failed to load'; return; }
+  try{ peer = new Peer('pvz2p-'+netCode, PEER_OPTS); }catch(e){ netStatus='PeerJS failed to load'; return; }
   peer.on('open', ()=>{ netStatus='Waiting for opponent to join…'; });
   peer.on('connection', c=>{ conn=c; wireConn(c); });
   peer.on('error', err=>{
@@ -1970,12 +1982,19 @@ function tryHostPeer(attempt){
 }
 function netJoin(code){
   netRole='guest'; netConnected=false; netCode=code; netStatus='Connecting to '+code+'…';
-  try{ peer=new Peer(); }catch(e){ netStatus='PeerJS failed to load'; return; }
+  try{ peer=new Peer(undefined, PEER_OPTS); }catch(e){ netStatus='PeerJS failed to load'; return; }
   peer.on('open', ()=>{ conn=peer.connect('pvz2p-'+code,{reliable:true}); wireConn(conn); });
-  peer.on('error', err=>{ netStatus='Network error: '+((err&&err.type)||'unknown'); });
+  peer.on('error', err=>{
+    const t=(err&&err.type)||'unknown';
+    netStatus = t==='peer-unavailable' ? 'No room with that code — check it and try again.' : 'Network error: '+t;
+  });
+  // if the channel hasn't opened after a while, tell the player what to try
+  clearTimeout(connectTimer);
+  connectTimer = setTimeout(()=>{ if(!netConnected)
+    netStatus='Still connecting… if it hangs, put both devices on the SAME Wi-Fi and start a fresh code.'; }, 12000);
 }
 function wireConn(c){
-  c.on('open', ()=>{ netConnected=true;
+  c.on('open', ()=>{ netConnected=true; clearTimeout(connectTimer);
     netStatus = netRole==='host' ? 'Opponent connected — press Start!' : 'Connected! Waiting for host…';
   });
   c.on('data', d=>onNetData(d));
@@ -1990,6 +2009,7 @@ function onNetClose(){
   } else if(state==='lobby'){ netStatus='Opponent disconnected'; }
 }
 function teardownNet(){
+  clearTimeout(connectTimer);
   try{ if(conn) conn.close(); }catch(e){}
   try{ if(peer) peer.destroy(); }catch(e){}
   conn=null; peer=null; netConnected=false; netRole=null; netStatus=''; lobbyStage='choice';
