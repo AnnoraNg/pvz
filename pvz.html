@@ -221,19 +221,19 @@ const EAT_DPS = 80;
    ============================================================ */
 const VS = {
   matchTime:   180,   // seconds the plant player must survive
-  startBrains: 125,   // zombie player's opening brains (enough to strike right after grace)
-  baseRate:    12,    // brains per second at income level 1 (was 7 — plants dominated)
-  ratePerLvl:  5,     // extra brains/sec per income upgrade
+  startBrains: 100,   // zombie player's opening brains
+  baseRate:    10,    // brains per second at income level 1
+  ratePerLvl:  4,     // extra brains/sec per income upgrade
   incomeBase:  125,   // cost of the first income upgrade
-  incomeStep:  100,   // added to income cost each level
-  maxIncome:   6,     // income upgrade cap
-  brainCap:    1200,  // max brains you can hold
+  incomeStep:  110,   // added to income cost each level
+  maxIncome:   5,     // income upgrade cap (was 6 — capped the late-game snowball)
+  brainCap:    650,   // max brains you can hold (lower = no huge saved-up burst)
   spawnGrace:  6,     // seconds before the zombie player may spawn (plant setup time)
-  startSun:    125,   // plant player's opening sun (was 150 — trimmed to slow the turtle)
-  // per-level economy scaling: higher levels give the attacker more, to keep up
-  // with the bigger plant loadouts (jalapeño / cherry bomb / tall-nut etc.)
-  brainsPerLevel: 8,  // + this many opening brains per level index
-  ratePerLevel:   0.4,// + this many brains/sec per level index
+  startSun:    125,   // plant player's opening sun
+  globalSpawnGap: 0.8,// min seconds between ANY two zombie spawns — the anti-spam throttle
+  // per-level economy scaling (kept small: the first pass grew way too fast late)
+  brainsPerLevel: 3,  // + this many opening brains per level index
+  ratePerLevel:   0.12,// + this many brains/sec per level index
 };
 // Per-zombie cost (brains) + cooldown (s) for the versus palette.
 // Costs trimmed and cooldowns shortened vs. the first pass so the horde can
@@ -430,6 +430,7 @@ function newVersus(idx, seedKeys){
     incomeLevel: 1,
     baseRate,
     brainRate: baseRate,
+    gspawnCd: 0,
     zseeds: palette.map(k=>({key:k, cd:0})),
     zselected: null,
     t: 0, skySunT: 5,
@@ -454,11 +455,13 @@ function newVersus(idx, seedKeys){
 function versusSpawn(ztype, row){
   if(!G || !G.versus) return false;
   if(G.spawnGrace>0) return false;
+  if(G.gspawnCd>0) return false;          // global throttle: can't dump the whole horde at once
   const z = G.zseeds.find(s=>s.key===ztype);
   const def = ZCOST[ztype];
   if(!z || !def || z.cd>0 || G.brains < def.cost) return false;
   G.brains -= def.cost;
   z.cd = def.cd;
+  G.gspawnCd = VS.globalSpawnGap;
   G.zombies.push(makeZombie(ztype, clamp(row,0,ROWS-1)));
   sfx('plant');
   return true;
@@ -547,6 +550,7 @@ function update(dt){
   // ---- versus economy + match timer (zombie player buys zombies; no scripted waves) ----
   if(G.versus){
     if(G.spawnGrace>0) G.spawnGrace -= dt;
+    if(G.gspawnCd>0) G.gspawnCd -= dt;
     G.brains = Math.min(VS.brainCap, G.brains + G.brainRate*dt);
     for(const z of G.zseeds) if(z.cd>0) z.cd-=dt;
     G.matchTime -= dt;
@@ -2056,6 +2060,7 @@ function serializeState(){
     t:+G.t.toFixed(2), sun:Math.floor(G.sun), brains:Math.floor(G.brains), incomeLevel:G.incomeLevel,
     brainRate:+G.brainRate.toFixed(2), matchTime:+G.matchTime.toFixed(1), spawnGrace:+Math.max(0,G.spawnGrace).toFixed(1),
     winner:G.winner, startBanner:+Math.max(0,G.startBanner).toFixed(2), worldBanner:+Math.max(0,G.worldBanner||0).toFixed(2), shake:+Math.max(0,shake).toFixed(2),
+    gspawnCd:+Math.max(0,G.gspawnCd||0).toFixed(2),
     seeds:G.seeds.map(s=>({key:s.key,cd:+Math.max(0,s.cd).toFixed(2)})),
     zseeds:G.zseeds.map(s=>({key:s.key,cd:+Math.max(0,s.cd).toFixed(2)})),
     plants,
@@ -2069,7 +2074,7 @@ function serializeState(){
 }
 function applySnapshot(s){
   G.t=s.t; G.sun=s.sun; G.brains=s.brains; G.incomeLevel=s.incomeLevel; G.brainRate=s.brainRate;
-  G.matchTime=s.matchTime; G.spawnGrace=s.spawnGrace; G.winner=s.winner;
+  G.matchTime=s.matchTime; G.spawnGrace=s.spawnGrace; G.winner=s.winner; G.gspawnCd=s.gspawnCd||0;
   G.startBanner=s.startBanner; G.worldBanner=s.worldBanner; shake=s.shake;
   G.seeds=s.seeds.map(x=>({key:x.key,cd:x.cd}));
   G.zseeds=s.zseeds.map(x=>({key:x.key,cd:x.cd}));
@@ -2077,10 +2082,31 @@ function applySnapshot(s){
   for(const p of s.plants) G.grid[p.r][p.c]={key:p.key,hp:p.hp,maxHp:p.maxHp,t:p.t,wob:p.wob,age:p.age,armT:p.armT,chewT:p.chewT,asleep:p.asleep,fuse:p.fuse};
   G.zombies=s.zombies.map(z=>({type:z.type,row:z.row,x:z.x,hp:z.hp,armor:z.armor,maxArmor:z.maxArmor,dead:z.dead,walk:z.walk,eating:z.eat?{}:null,hypno:z.hypno,slow:z.slow,vault:z.vault,jumpT:z.jumpT}));
   G.projectiles=s.projectiles.map(p=>({x:p.x,y:p.y,row:p.row,puff:p.puff,fire:p.fire,frozen:p.frozen,delay:0}));
-  G.suns=s.suns.map(x=>({id:x.id,x:x.x,y:x.y,ty:x.y,wob:x.wob,life:x.life,val:x.val,v:0}));
+  G.suns=s.suns.map(x=>({id:x.id,x:x.x,y:x.y,ty:x.y,wob:x.wob,life:x.life,val:x.val,v:45}));
   G.mowers=s.mowers.map(m=>({row:m.row,x:m.x,active:m.active,gone:m.gone}));
   G.fx=s.fx.map(f=>({x:f.x,y:f.y,kind:f.kind,txt:f.txt,t:f.t}));
   G.graves=s.graves.map(g=>({r:g.r,c:g.c}));
+}
+// The guest renders between host snapshots by advancing motion + clocks locally,
+// so movement and the timer look smooth instead of stepping at the network rate.
+// Snapshots then gently correct these estimates when they arrive.
+function guestTick(dt){
+  if(!G) return;
+  if(G.matchTime>0) G.matchTime -= dt;
+  if(G.spawnGrace>0) G.spawnGrace -= dt;
+  if(G.gspawnCd>0) G.gspawnCd -= dt;
+  if(G.startBanner>0) G.startBanner -= dt;
+  if(G.worldBanner>0) G.worldBanner -= dt;
+  for(const z of G.zombies){
+    z.walk = (z.walk||0) + dt*6;
+    if(!z.dead && !z.eating && !(z.jumpT>0)){
+      const base = (ZOMBIES[z.type] && ZOMBIES[z.type].speed) || 11;
+      z.x -= base*(z.slow>0?0.5:1)*dt;
+    }
+  }
+  for(const p of G.projectiles) p.x += 300*dt;         // peas travel right at ~300px/s
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){ const pl=G.grid[r][c]; if(pl) pl.t=(pl.t||0)+dt; }
+  for(const s of G.suns){ if(s.y<s.ty) s.y=Math.min(s.ty, s.y+(s.v||45)*dt); s.wob=(s.wob||0)+dt*3; }
 }
 
 /* ---- lobby drawing + input ---- */
@@ -2203,7 +2229,7 @@ function drawZombieBar(atBottom){
   const cw=64, gap=6; let x=150;
   G.zseeds.forEach((s,i)=>{
     const def=ZCOST[s.key];
-    const afford = G.brains>=def.cost && s.cd<=0 && G.spawnGrace<=0;
+    const afford = G.brains>=def.cost && s.cd<=0 && G.spawnGrace<=0 && (G.gspawnCd||0)<=0;
     if(ASSETS.zombie_card){
       ctx.save(); if(G.zselected===i) ctx.filter='brightness(118%)'; ctx.drawImage(ASSETS.zombie_card, x, y+8, cw, h-16); ctx.restore();
       if(G.zselected===i){ ctx.strokeStyle='#ffd42a'; ctx.lineWidth=3; roundRect(x,y+8,cw,h-16,8); ctx.stroke(); }
@@ -2215,7 +2241,12 @@ function drawZombieBar(atBottom){
     ctx.fillStyle='#eecfff'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center';
     ctx.fillText(def.cost, x+cw/2, y+h-9);
     if(!afford){ ctx.fillStyle='rgba(16,8,24,.55)'; roundRect(x,y+8,cw,h-16,8); ctx.fill(); }
-    if(s.cd>0){ const f=clamp(s.cd/def.cd,0,1); ctx.fillStyle='rgba(8,4,14,.62)'; roundRect(x,y+8,cw,(h-16)*f,8); ctx.fill(); }
+    if(s.cd>0){ const f=clamp(s.cd/def.cd,0,1);
+      ctx.fillStyle='rgba(8,4,14,.62)'; roundRect(x,y+8,cw,(h-16)*f,8); ctx.fill();
+      // numeric countdown so the player can see exactly when the card is ready
+      ctx.fillStyle='#fff'; ctx.font='bold 18px Trebuchet MS'; ctx.textAlign='center';
+      ctx.fillText(Math.ceil(s.cd), x+cw/2, y+h/2+2);
+    }
     ZCARD_RECTS.push({x,y:y+8,w:cw,h:h-16,i});
     x+=cw+gap;
   });
@@ -2267,10 +2298,14 @@ function drawVersusGhost(){
   const canP=(mySide==='plants'||netRole==='local'), canZ=(mySide==='zombies'||netRole==='local');
   if(canZ && G.zselected!=null){
     const r=Math.floor((mouse.y-GRID_Y)/CELL_H);
-    if(r>=0&&r<ROWS){
-      ctx.save(); ctx.globalAlpha=.16; ctx.fillStyle='#b48ad4'; ctx.fillRect(GRID_X,cellY(r),COLS*CELL_W,CELL_H); ctx.restore();
-      ctx.save(); ctx.globalAlpha=.6; ctx.translate(GRID_R-6,cellY(r)+CELL_H/2); drawZombieIcon(G.zseeds[G.zselected].key,0,0); ctx.restore();
+    // subtle highlight of the target row only while the cursor is over the lawn
+    if(r>=0&&r<ROWS && mouse.x>=GRID_X && mouse.x<GRID_R){
+      ctx.save(); ctx.globalAlpha=.12; ctx.fillStyle='#b48ad4'; ctx.fillRect(GRID_X,cellY(r),COLS*CELL_W,CELL_H);
+      ctx.globalAlpha=.5; ctx.strokeStyle='#d8a0ff'; ctx.lineWidth=2; ctx.strokeRect(GRID_X+1,cellY(r)+1,COLS*CELL_W-2,CELL_H-2); ctx.restore();
     }
+    // the zombie ghost follows the cursor/finger (drag-and-drop), not pinned to the floor
+    ctx.save(); ctx.globalAlpha=.62; ctx.translate(mouse.x,mouse.y); ctx.scale(1.15,1.15);
+    drawZombieIcon(G.zseeds[G.zselected].key,0,0); ctx.restore();
     return;
   }
   if(canP){
@@ -2555,8 +2590,10 @@ function loop(now){
   last = now;
   // run the sim multiple times per frame for fast-forward (keeps physics exact)
   for(let i=0;i<gameSpeed;i++) update(dt);
-  // host streams authoritative state to the guest (~20 Hz)
-  if(netRole==='host' && conn && conn.open && (state==='mp_playing'||state==='mp_over') && now-lastSnap>50){
+  // guest smooths motion + clocks locally between host snapshots
+  if(netRole==='guest' && state==='mp_playing') guestTick(dt);
+  // host streams authoritative state to the guest (~15 Hz — lighter payload, less lag)
+  if(netRole==='host' && conn && conn.open && (state==='mp_playing'||state==='mp_over') && now-lastSnap>66){
     lastSnap = now; netSend({t:'state', s:serializeState()});
   }
   draw();
