@@ -1,53 +1,29 @@
-# 🌻 Plants vs. Zombies — Fan Remake 🧟
+# Plants vs. Zombies — a fan remake
 
-A single-file HTML5 canvas remake of Plants vs. Zombies, with a full solo campaign **and** a 2-player online versus mode.
+This is my from-scratch remake of Plants vs. Zombies, built as one big HTML file you can just open in a browser. It started as a "can I actually rebuild the lawn defense I grew up with" experiment and slowly turned into something I kept adding to — night levels, fog, a pile of zombie types, and eventually a whole 2-player mode where a friend gets to play as the zombies.
 
-### ▶ Play it live
-**https://annorang.github.io/pvz/**
+**Play it here:** https://annorang.github.io/pvz/
 
-No install, no sign-up — it runs in the browser. Works on desktop and mobile.
+It runs on desktop or phone, no install, no accounts.
 
----
+## What's in it
 
-## Game modes
+The single-player side is the game you'd expect. You plant Sunflowers to build up sun, drop Peashooters and Wall-nuts to hold the line, and try to survive the wave. There are 15 levels split across three settings that each change how you play. Daytime is the straightforward version where sun drifts down from the sky. At night the sky gives you nothing, so you lean on Sun-shrooms for economy and deal with graves scattered across the lawn that split open during the big wave. The fog levels keep the night rules but hide the right half of the board, so you either plant blind or use Planterns to burn the fog away.
 
-Pick a mode on the title screen:
+Along the way you unlock most of the plants I actually cared about recreating — Snow Pea, Repeater, Cherry Bomb, Potato Mine, Chomper, Squash, Torchwood (which sets peas on fire as they pass through), Jalapeño, Tall-nut, and the mushrooms. The zombies range from the basic shambler up through Coneheads, Bucketheads, Pole Vaulters that jump your first plant, Footballs, Newspaper zombies that rage when you shred their paper, Jack-in-the-Boxes, Screen Doors, and Dancers that summon backup. Lawnmowers still bail you out once per row, and there's a little synth soundtrack with a few tracks you can flip between.
 
-### ☀ 1 Player
-The classic campaign — **15 levels** across three worlds:
-- **Day** — sun falls from the sky; build your economy with Sunflowers.
-- **Night** — no sky sun; grow Sun-shrooms, and watch for graves that crack open.
-- **Fog** — night rules plus fog hiding the right side of the lawn; light it with Planterns.
+## The 2-player mode
 
-Features 17 plants (Peashooter, Wall-nut, Snow Pea, Cherry Bomb, Chomper, Torchwood, Jalapeño, mushrooms and more) and a dozen zombie types (Coneheads, Buckets, Pole Vaulters, Football, Jack-in-the-Box, Screen Doors, Dancers…), lawnmower saves, huge waves, and 4 selectable music tracks.
+This is the part I'm most attached to. Instead of the computer sending waves at you, a second person plays the zombies — and I didn't want them to just click "spawn" endlessly, so I gave the zombie side an economy borrowed from Battle Cats. Brains slowly refill on their own, and you can pour brains back into raising your income rate, so there's a real push-and-pull between saving up for a Buckethead now versus investing so you can afford two later. Each zombie has its own cost and cooldown, and you send them down whichever row you like.
 
-### ⚔ 2 Players (Versus)
-One player **defends with plants**, the other **commands the zombies**:
-- The zombie player runs a **Battle-Cats-style economy** — "brains" regenerate over time and can be reinvested to raise the income rate, then spent to send zombies (each with its own cost and cooldown) down any row.
-- **Win condition (survival timer):** any zombie that reaches the house = **zombies win**; if the plants survive until the timer runs out = **plants win**.
-- Play **across two devices** with a 4-character game code, or **local hotseat** on one screen.
+To keep it fair, both sides are on a clock. If any zombie makes it into the house, the zombie player wins on the spot. If the plant player holds out until the timer runs out, the plants win. It reuses the normal levels, so the plants you get and the zombies your opponent can buy are tied to the same level — harder levels arm both sides more.
 
-See **[MULTIPLAYER_README.md](MULTIPLAYER_README.md)** for how the networking and balancing work.
+You can play it two ways: across two devices using a short game code, or local hotseat on one screen for testing. The tricky part was doing online multiplayer with no server, since the whole thing is meant to live on GitHub Pages for free. I ended up using WebRTC (through PeerJS) with one device running the actual game and streaming the state to the other — the code you share is really just the peer address. There's a longer write-up of how that works, plus all the balance numbers, in [MULTIPLAYER_README.md](MULTIPLAYER_README.md).
 
----
+## Playing
 
-## How to play
+Click a seed packet then a tile to plant, click sun to bank it, grab the shovel to dig something up. In versus, the zombie player clicks a zombie card then a row to send it, and buys Income upgrades to grow their brains faster over the match. `P` pauses (single-player), `M` mutes, `Esc` deselects.
 
-**Plant side**
-- Click a seed packet, then click a lawn tile to plant (costs sun).
-- Click falling **sun** to collect it. Use the **shovel** to remove a plant.
+## A couple of honest notes
 
-**Zombie side (versus)**
-- Click a zombie card, then click a **row** to send it in from the right.
-- Buy **Income** upgrades to grow your brain income over the match.
-
-**Keys:** `P` pause (solo) · `M` mute · `Esc` deselect.
-
----
-
-## Tech notes
-- Pure static site: one HTML file + `assets/` sprites. Falls back to built-in vector art if a sprite is missing.
-- Multiplayer uses **WebRTC via PeerJS** (host-authoritative), so there's no backend — it deploys straight to GitHub Pages.
-- The only external dependency is the PeerJS library, loaded from a CDN.
-
-*A fan remake — not affiliated with PopCap or EA.*
+It's a fan project, not affiliated with PopCap or EA — I made it because I love the original. The art falls back to simple drawn shapes if a sprite is missing, so it always runs. And the versus balance is my best first guess; if one side feels unfair, the numbers are all sitting in one spot at the top of the code, easy to tweak. If you play it and something feels off, I'd genuinely like to know.
