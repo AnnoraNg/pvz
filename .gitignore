@@ -3,8 +3,5 @@
 
 # local-only files — kept on disk, not uploaded to GitHub (not needed to run the game)
 AGENTS.md
-CODEX_ASSET_PROMPT.md
-CODEX_ASSET_PROMPT_2.md
-CODEX_ASSET_PROMPT_3.md
-CODEX_ASSET_PROMPT_4.md
+CODEX_ASSET_PROMPT*.md
 tools/

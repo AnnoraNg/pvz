@@ -7,7 +7,7 @@
 <style>
   html,body{margin:0;padding:0;background:#1a2410;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:'Trebuchet MS',Verdana,sans-serif;}
   #wrap{position:relative;}
-  canvas{display:block;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.6);cursor:default;}
+  canvas{display:block;border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.6);cursor:default;touch-action:none;}
 </style>
 </head>
 <body>
@@ -34,7 +34,9 @@ const ASSETS = {};
   'zombie_polevault','zombie_polevault_nopole','zombie_football','zombie_newspaper','zombie_newspaper_angry','zombie_jack',
   'background_night','grave','sunshroom','sunshroom_big','puffshroom','fumeshroom','hypnoshroom','plantern','puff','fume',
   'zombie_screendoor','zombie_dancer','zombie_backup',
-  'minibtn','minibtn_active','icon_pause','icon_play','icon_sound_on','icon_sound_off','lock','card','panel','trophy','defeat'
+  'minibtn','minibtn_active','icon_pause','icon_play','icon_sound_on','icon_sound_off','lock','card','panel','trophy','defeat',
+  // versus (2-player) zombie-side HUD — optional; falls back to drawn art if missing
+  'zombie_hud_bar','zombie_card','brain_panel','brain_icon','income_btn'
 ].forEach(n=>{
   const im = new Image();
   im.onload = ()=>{ ASSETS[n]=im; };
@@ -218,37 +220,43 @@ const EAT_DPS = 80;
    house = zombies win; timer runs out = plants win.
    ============================================================ */
 const VS = {
-  matchTime:   240,   // seconds the plant player must survive
-  startBrains: 75,    // zombie player's opening brains
-  baseRate:    7,     // brains per second at income level 1
-  ratePerLvl:  3.5,   // extra brains/sec per income upgrade
-  incomeBase:  100,   // cost of the first income upgrade
-  incomeStep:  75,    // added to income cost each level
+  matchTime:   180,   // seconds the plant player must survive
+  startBrains: 125,   // zombie player's opening brains (enough to strike right after grace)
+  baseRate:    12,    // brains per second at income level 1 (was 7 — plants dominated)
+  ratePerLvl:  5,     // extra brains/sec per income upgrade
+  incomeBase:  125,   // cost of the first income upgrade
+  incomeStep:  100,   // added to income cost each level
   maxIncome:   6,     // income upgrade cap
-  brainCap:    900,   // max brains you can hold
-  spawnGrace:  8,     // seconds before the zombie player may spawn (plant setup time)
-  startSun:    150,   // plant player's opening sun
+  brainCap:    1200,  // max brains you can hold
+  spawnGrace:  6,     // seconds before the zombie player may spawn (plant setup time)
+  startSun:    125,   // plant player's opening sun (was 150 — trimmed to slow the turtle)
+  // per-level economy scaling: higher levels give the attacker more, to keep up
+  // with the bigger plant loadouts (jalapeño / cherry bomb / tall-nut etc.)
+  brainsPerLevel: 8,  // + this many opening brains per level index
+  ratePerLevel:   0.4,// + this many brains/sec per level index
 };
 // Per-zombie cost (brains) + cooldown (s) for the versus palette.
+// Costs trimmed and cooldowns shortened vs. the first pass so the horde can
+// actually threaten a dug-in plant player.
 const ZCOST = {
-  normal:    { cost:25,  cd:1.5, name:'Zombie'      },
-  cone:      { cost:50,  cd:3,   name:'Conehead'    },
-  runner:    { cost:50,  cd:4,   name:'Sprinter'    },
-  bucket:    { cost:100, cd:6,   name:'Buckethead'  },
-  polevault: { cost:75,  cd:6,   name:'Pole Vaulter'},
-  newspaper: { cost:60,  cd:5,   name:'Newspaper'   },
-  football:  { cost:150, cd:10,  name:'Football'    },
-  jack:      { cost:100, cd:11,  name:'Jack-in-Box' },
-  screendoor:{ cost:100, cd:7,   name:'Screen Door' },
-  dancer:    { cost:125, cd:12,  name:'Dancer'      },
+  normal:    { cost:25,  cd:1.2, name:'Zombie'      },
+  cone:      { cost:45,  cd:2.5, name:'Conehead'    },
+  runner:    { cost:55,  cd:4,   name:'Sprinter'    },
+  bucket:    { cost:90,  cd:5,   name:'Buckethead'  },
+  polevault: { cost:75,  cd:5,   name:'Pole Vaulter'},
+  newspaper: { cost:55,  cd:4,   name:'Newspaper'   },
+  football:  { cost:150, cd:8,   name:'Football'    },
+  jack:      { cost:100, cd:9,   name:'Jack-in-Box' },
+  screendoor:{ cost:90,  cd:6,   name:'Screen Door' },
+  dancer:    { cost:125, cd:10,  name:'Dancer'      },
 };
 // stable card order so both devices show the same palette layout
 const ZORDER = ['normal','cone','runner','bucket','polevault','newspaper','football','jack','screendoor','dancer'];
-// which zombies the attacker may buy on a given level = the zombies that
-// level normally spawns (always at least the basic zombie). This keeps 2P
-// balanced against the same level's plant list.
+// The attacker ALWAYS gets a capable baseline palette (so even Level 1 isn't a
+// walkover for the plants), plus whatever special zombies that level features.
+const VS_BASE_PALETTE = ['normal','cone','runner','bucket','polevault'];
 function versusZombiePalette(L){
-  const set = new Set(['normal']);
+  const set = new Set(VS_BASE_PALETTE);
   for(const t in L.types){ if(ZCOST[t]) set.add(t); }
   return ZORDER.filter(k=>set.has(k));
 }
@@ -406,6 +414,9 @@ function newVersus(idx, seedKeys){
   const L = LEVELS[idx];
   lastSeeds = (seedKeys && seedKeys.length) ? seedKeys.slice() : L.plants.slice(0, MAXSLOTS);
   const palette = versusZombiePalette(L);
+  // scale the attacker's economy with the level so bigger plant loadouts stay beatable
+  const startBrains = VS.startBrains + idx*VS.brainsPerLevel;
+  const baseRate = VS.baseRate + idx*VS.ratePerLevel;
   G = {
     L, versus:true,
     sun: VS.startSun,
@@ -415,9 +426,10 @@ function newVersus(idx, seedKeys){
     seeds: lastSeeds.map(k=>({key:k, cd:0})),
     selected: null, shovel: false,
     // zombie player's economy
-    brains: VS.startBrains,
+    brains: startBrains,
     incomeLevel: 1,
-    brainRate: VS.baseRate,
+    baseRate,
+    brainRate: baseRate,
     zseeds: palette.map(k=>({key:k, cd:0})),
     zselected: null,
     t: 0, skySunT: 5,
@@ -460,7 +472,7 @@ function versusUpgradeIncome(){
   if(G.brains < cost) return false;
   G.brains -= cost;
   G.incomeLevel++;
-  G.brainRate = VS.baseRate + (G.incomeLevel-1)*VS.ratePerLvl;
+  G.brainRate = (G.baseRate||VS.baseRate) + (G.incomeLevel-1)*VS.ratePerLvl;
   sfx('sun');
   return true;
 }
@@ -2074,10 +2086,15 @@ function drawLobby(){
       ctx.fillText('Local hotseat — plants use the top bar, zombies the bottom bar', W/2, 170);
     }
     const L=LEVELS[lobbyLevel];
-    ctx.fillStyle='#9ad4ff'; ctx.font='bold 20px Trebuchet MS';
-    ctx.fillText('◀    '+L.name+'    ▶', W/2, 278);
-    LOBBY_BTNS.push({x:W/2-215,y:260,w:44,h:28,act:'prevlvl'});
-    LOBBY_BTNS.push({x:W/2+171,y:260,w:44,h:28,act:'nextlvl'});
+    // fixed-position arrow buttons so the click targets always line up with the glyphs
+    const ay=256, aw=48, ah=36, lax=W/2-244, rax=W/2+196;
+    drawBtn(lax, ay, aw, ah, '◀'); LOBBY_BTNS.push({x:lax,y:ay,w:aw,h:ah,act:'prevlvl'});
+    drawBtn(rax, ay, aw, ah, '▶'); LOBBY_BTNS.push({x:rax,y:ay,w:aw,h:ah,act:'nextlvl'});
+    ctx.fillStyle='#9ad4ff'; ctx.textAlign='center';
+    fitFont(L.name, 360, 21);
+    ctx.fillText(L.name, W/2, ay+20);
+    ctx.fillStyle='rgba(255,255,255,.6)'; ctx.font='12px Trebuchet MS';
+    ctx.fillText('Level '+(lobbyLevel+1)+' of '+LEVELS.length+'  —  use ◀ ▶ to choose', W/2, ay+40);
     if(lobbyStage==='host'){
       const sideTxt = hostSide==='plants' ? 'You play: Plants (defend)' : 'You play: Zombies (attack)';
       const w=340,h=46,x=W/2-w/2,y=304; drawBtn(x,y,w,h,sideTxt); LOBBY_BTNS.push({x,y,w,h,act:'side'});
@@ -2116,8 +2133,8 @@ function handleLobbyClick(x,y){
     else if(a==='join'){ const code=(prompt('Enter the 4-character game code:')||'').trim().toUpperCase(); if(code){ lobbyStage='joinwait'; netJoin(code); } }
     else if(a==='local'){ netRole='local'; lobbyStage='local'; }
     else if(a==='side'){ hostSide = hostSide==='plants'?'zombies':'plants'; }
-    else if(a==='prevlvl'){ lobbyLevel=(lobbyLevel-1+unlocked)%unlocked; }
-    else if(a==='nextlvl'){ lobbyLevel=(lobbyLevel+1)%unlocked; }
+    else if(a==='prevlvl'){ lobbyLevel=(lobbyLevel-1+LEVELS.length)%LEVELS.length; }
+    else if(a==='nextlvl'){ lobbyLevel=(lobbyLevel+1)%LEVELS.length; }
     else if(a==='start'){ startFromLobby(); }
     else if(a==='cancel'){ teardownNet(); state='lobby'; }
     return;
@@ -2128,7 +2145,17 @@ function handleLobbyClick(x,y){
 const ZCARD_RECTS=[]; let ZINCOME_RECT=null;
 const VS_LEAVE={x:W-40,y:118,w:30,h:30};
 const VS_MUTE ={x:W-78,y:118,w:30,h:30};
+const VS_OVER_BTNS=[];
+// after a match, return the HOST/LOCAL player to the lobby config while keeping
+// the PeerJS connection alive, so the pair can play level after level.
+function versusRematch(){
+  if(netRole==='local'){ state='lobby'; lobbyStage='local'; return; }
+  lobbyStage='host';
+  netStatus = netConnected ? 'Still connected — pick the next level and press Start.' : 'Opponent disconnected.';
+  state='lobby';
+}
 function drawBrainIcon(x,y,r){
+  if(ASSETS.brain_icon){ const s=r*2.4; ctx.drawImage(ASSETS.brain_icon, x-s/2, y-s/2, s, s); return; }
   ctx.save(); ctx.translate(x,y);
   ctx.fillStyle='#d98ad0';
   ctx.beginPath(); ctx.arc(-r*0.42,0,r*0.72,0,7); ctx.fill();
@@ -2139,10 +2166,13 @@ function drawBrainIcon(x,y,r){
 }
 function drawZombieBar(atBottom){
   const y = atBottom ? H-90 : 8, h=82;
-  ctx.fillStyle='rgba(28,14,38,.92)'; roundRect(10,y,W-20,h,10); ctx.fill();
-  ctx.strokeStyle='rgba(180,120,220,.45)'; ctx.lineWidth=2; ctx.stroke();
-  // brains
-  ctx.fillStyle='#2a1636'; roundRect(20,y+8,120,h-16,8); ctx.fill();
+  // bar background (uses zombie_hud_bar.png if present, else drawn panel)
+  if(ASSETS.zombie_hud_bar){ ctx.drawImage(ASSETS.zombie_hud_bar, 10, y, W-20, h); }
+  else { ctx.fillStyle='rgba(28,14,38,.92)'; roundRect(10,y,W-20,h,10); ctx.fill();
+    ctx.strokeStyle='rgba(180,120,220,.45)'; ctx.lineWidth=2; ctx.stroke(); }
+  // brains counter
+  if(ASSETS.brain_panel){ ctx.drawImage(ASSETS.brain_panel, 20, y+8, 120, h-16); }
+  else { ctx.fillStyle='#2a1636'; roundRect(20,y+8,120,h-16,8); ctx.fill(); }
   drawBrainIcon(50,y+30,15);
   ctx.fillStyle='#eecfff'; ctx.font='bold 22px Trebuchet MS'; ctx.textAlign='center';
   ctx.fillText(Math.floor(G.brains), 96, y+36);
@@ -2150,13 +2180,18 @@ function drawZombieBar(atBottom){
   ctx.fillText('+'+G.brainRate.toFixed(1)+'/s', 96, y+54);
   // cards
   ZCARD_RECTS.length=0;
-  const cw=62, gap=6; let x=150;
+  const cw=64, gap=6; let x=150;
   G.zseeds.forEach((s,i)=>{
     const def=ZCOST[s.key];
     const afford = G.brains>=def.cost && s.cd<=0 && G.spawnGrace<=0;
-    ctx.fillStyle = (G.zselected===i)?'#4a2a5a':'#33203f'; roundRect(x,y+8,cw,h-16,8); ctx.fill();
-    if(G.zselected===i){ ctx.strokeStyle='#ffd42a'; ctx.lineWidth=3; ctx.stroke(); }
-    ctx.save(); ctx.translate(x+cw/2,y+34); ctx.scale(.78,.78); drawZombieIcon(s.key,0,0); ctx.restore();
+    if(ASSETS.zombie_card){
+      ctx.save(); if(G.zselected===i) ctx.filter='brightness(118%)'; ctx.drawImage(ASSETS.zombie_card, x, y+8, cw, h-16); ctx.restore();
+      if(G.zselected===i){ ctx.strokeStyle='#ffd42a'; ctx.lineWidth=3; roundRect(x,y+8,cw,h-16,8); ctx.stroke(); }
+    } else {
+      ctx.fillStyle = (G.zselected===i)?'#4a2a5a':'#33203f'; roundRect(x,y+8,cw,h-16,8); ctx.fill();
+      if(G.zselected===i){ ctx.strokeStyle='#ffd42a'; ctx.lineWidth=3; ctx.stroke(); }
+    }
+    ctx.save(); ctx.translate(x+cw/2,y+33); ctx.scale(.78,.78); drawZombieIcon(s.key,0,0); ctx.restore();
     ctx.fillStyle='#eecfff'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center';
     ctx.fillText(def.cost, x+cw/2, y+h-9);
     if(!afford){ ctx.fillStyle='rgba(16,8,24,.55)'; roundRect(x,y+8,cw,h-16,8); ctx.fill(); }
@@ -2166,8 +2201,10 @@ function drawZombieBar(atBottom){
   });
   // income upgrade
   const iw=126, ix=W-iw-22, maxed=G.incomeLevel>=VS.maxIncome, canBuy=!maxed&&G.brains>=incomeCost();
-  ctx.fillStyle = maxed?'#3a2a1a':canBuy?'#5c3a24':'#33203f'; roundRect(ix,y+8,iw,h-16,8); ctx.fill();
-  ctx.strokeStyle='rgba(255,200,120,.45)'; ctx.lineWidth=2; ctx.stroke();
+  if(ASSETS.income_btn){ ctx.save(); if(canBuy) ctx.filter='brightness(115%)'; else if(maxed) ctx.filter='grayscale(60%)';
+    ctx.drawImage(ASSETS.income_btn, ix, y+8, iw, h-16); ctx.restore(); }
+  else { ctx.fillStyle = maxed?'#3a2a1a':canBuy?'#5c3a24':'#33203f'; roundRect(ix,y+8,iw,h-16,8); ctx.fill();
+    ctx.strokeStyle='rgba(255,200,120,.45)'; ctx.lineWidth=2; ctx.stroke(); }
   ctx.fillStyle='#ffd9a8'; ctx.font='bold 15px Trebuchet MS'; ctx.textAlign='center';
   ctx.fillText('Income Lv '+G.incomeLevel, ix+iw/2, y+32);
   ctx.font='12px Trebuchet MS';
@@ -2245,45 +2282,114 @@ function drawVersusOver(){
   if(ASSETS.banner_ribbon) ctx.drawImage(ASSETS.banner_ribbon, W/2-360, H/2-105, 720, 100);
   ctx.font='bold 52px Trebuchet MS'; ctx.fillStyle=color; ctx.fillText(title, W/2, H/2-34);
   ctx.font='20px Trebuchet MS'; ctx.fillStyle='#fff'; ctx.fillText(sub, W/2, H/2+8);
-  drawBtn(W/2-95,H/2+48,190,50,'Back to Menu');
+  VS_OVER_BTNS.length=0;
+  const canRematch = (netRole==='host'||netRole==='local');
+  if(canRematch){
+    drawBtn(W/2-205,H/2+48,190,50,'Play Again');   VS_OVER_BTNS.push({x:W/2-205,y:H/2+48,w:190,h:50,act:'again'});
+    drawBtn(W/2+15, H/2+48,190,50,'Quit to Menu');  VS_OVER_BTNS.push({x:W/2+15, y:H/2+48,w:190,h:50,act:'quit'});
+  } else {
+    ctx.fillStyle='rgba(255,255,255,.75)'; ctx.font='15px Trebuchet MS';
+    ctx.fillText('Stay here — the host can start another level, or quit.', W/2, H/2+40);
+    drawBtn(W/2-95,H/2+58,190,50,'Quit to Menu'); VS_OVER_BTNS.push({x:W/2-95,y:H/2+58,w:190,h:50,act:'quit'});
+  }
   ctx.textAlign='left';
 }
-function handleVersusClick(x,y){
-  audioInit();
-  if(hit(VS_MUTE,x,y)){ muted=!muted; return; }
-  if(hit(VS_LEAVE,x,y)){ leaveVersus(); return; }
-  const canP=(mySide==='plants'||netRole==='local'), canZ=(mySide==='zombies'||netRole==='local');
-  const authority=(netRole!=='guest');
-  // zombie controls
-  if(canZ){
-    if(ZINCOME_RECT && hit(ZINCOME_RECT,x,y)){ if(authority) versusUpgradeIncome(); else netSend({t:'input',a:'income'}); return; }
-    for(const rq of ZCARD_RECTS){ if(x>=rq.x&&x<=rq.x+rq.w&&y>=rq.y&&y<=rq.y+rq.h){
-      G.zselected = (G.zselected===rq.i?null:rq.i); G.selected=null; G.shovel=false; return; } }
+/* ---- shared gameplay input helpers (used by solo AND versus, mouse + touch, with drag) ---- */
+function canControlPlants(){ return !(G&&G.versus) || mySide==='plants' || netRole==='local'; }
+function canControlZombies(){ return G&&G.versus && (mySide==='zombies' || netRole==='local'); }
+function isAuthority(){ return netRole!=='guest'; }   // host & local mutate G directly; guest sends intents
+
+// Which card (if any) is under the cursor for the side this device controls.
+function cardAt(x,y){
+  if(canControlZombies()){
+    for(const rq of ZCARD_RECTS) if(x>=rq.x&&x<=rq.x+rq.w&&y>=rq.y&&y<=rq.y+rq.h) return {kind:'zombie',i:rq.i};
   }
-  // plant controls
-  if(canP){
-    for(let i=G.suns.length-1;i>=0;i--){ const s=G.suns[i];
-      if((x-s.x)**2+(y-s.y)**2<30*30){ if(authority){ G.sun+=s.val; s.taken=true; } else netSend({t:'input',a:'sun',id:s.id}); sfx('sun'); return; } }
+  if(canControlPlants() && G.seeds){
     for(let i=0;i<G.seeds.length;i++){ const sx=seedX(i);
-      if(x>=sx&&x<=sx+SEED_W&&y>=SEED_Y&&y<=SEED_Y+SEED_H){ const s=G.seeds[i], d=PLANTS[s.key];
-        if(G.sun>=d.cost&&s.cd<=0){ G.selected=(G.selected===i?null:i); G.shovel=false; G.zselected=null; } return; } }
-    if(x>=SHOVEL_X&&x<=SHOVEL_X+54&&y>=SEED_Y&&y<=SEED_Y+SEED_H){ G.shovel=!G.shovel; G.selected=null; G.zselected=null; return; }
+      if(x>=sx&&x<=sx+SEED_W&&y>=SEED_Y&&y<=SEED_Y+SEED_H) return {kind:'plant',i}; }
   }
-  // lawn
+  return null;
+}
+function selectPlantCard(i){
+  const s=G.seeds[i], d=PLANTS[s.key];
+  if(G.sun>=d.cost && s.cd<=0){ G.selected=i; G.shovel=false; if(G.versus) G.zselected=null; return true; }
+  return false;
+}
+function selectZombieCard(i){ G.zselected=i; G.selected=null; G.shovel=false; return true; }
+function collectSunAt(x,y){
+  if(!canControlPlants()) return false;
+  for(let i=G.suns.length-1;i>=0;i--){ const s=G.suns[i];
+    if((x-s.x)**2+(y-s.y)**2<30*30){ if(isAuthority()){ G.sun+=s.val; s.taken=true; } else netSend({t:'input',a:'sun',id:s.id}); sfx('sun'); return true; } }
+  return false;
+}
+function shovelButtonAt(x,y){
+  if(!canControlPlants()) return false;
+  if(x>=SHOVEL_X&&x<=SHOVEL_X+54&&y>=SEED_Y&&y<=SEED_Y+SEED_H){ G.shovel=!G.shovel; G.selected=null; if(G.versus)G.zselected=null; return true; }
+  return false;
+}
+function gameControlButtons(x,y){
+  if(G.versus){
+    if(hit(VS_MUTE,x,y)){ muted=!muted; return true; }
+    if(hit(VS_LEAVE,x,y)){ leaveVersus(); return true; }
+    if(canControlZombies() && ZINCOME_RECT && hit(ZINCOME_RECT,x,y)){ if(isAuthority()) versusUpgradeIncome(); else netSend({t:'input',a:'income'}); return true; }
+  } else {
+    if(hit(PBTN,x,y)){ paused=true; return true; }
+    if(hit(MBTN,x,y)){ muted=!muted; return true; }
+    for(const b of SPEED_BTNS) if(hit(b,x,y)){ gameSpeed=b.s; return true; }
+  }
+  return false;
+}
+// Drop whatever is currently selected onto the lawn cell/row at (x,y).
+function placeAtLawn(x,y){
   const c=Math.floor((x-GRID_X)/CELL_W), r=Math.floor((y-GRID_Y)/CELL_H);
-  if(c>=0&&c<COLS&&r>=0&&r<ROWS){
-    if(canZ && G.zselected!=null){
-      const ztype=G.zseeds[G.zselected].key;
-      if(authority) versusSpawn(ztype,r); else netSend({t:'input',a:'spawn',ztype,row:r});
-      return;
+  if(c<0||c>=COLS||r<0||r>=ROWS) return false;
+  if(canControlZombies() && G.zselected!=null){
+    const ztype=G.zseeds[G.zselected].key;
+    if(isAuthority()) versusSpawn(ztype,r); else netSend({t:'input',a:'spawn',ztype,row:r});
+    return true;
+  }
+  if(canControlPlants()){
+    if(graveAt(r,c)) return false;
+    if(G.shovel){
+      if(isAuthority()){ if(G.grid[r][c]){ G.grid[r][c]=null; sfx('shovel'); } } else netSend({t:'input',a:'shovel',r,c});
+      G.shovel=false; return true;
     }
-    if(canP){
-      if(graveAt(r,c)) return;
-      if(G.shovel){ if(authority){ if(G.grid[r][c]){ G.grid[r][c]=null; sfx('shovel'); } } else netSend({t:'input',a:'shovel',r,c}); G.shovel=false; return; }
-      if(G.selected!=null && !G.grid[r][c]){ const s=G.seeds[G.selected], d=PLANTS[s.key];
-        if(G.sun>=d.cost){ if(authority){ G.sun-=d.cost; s.cd=d.recharge; G.grid[r][c]=makePlant(s.key,r,c); sfx('plant'); } else netSend({t:'input',a:'plant',key:s.key,r,c}); G.selected=null; } }
+    if(G.selected!=null && !G.grid[r][c]){
+      const s=G.seeds[G.selected], d=PLANTS[s.key];
+      if(G.sun>=d.cost){
+        if(isAuthority()){ G.sun-=d.cost; s.cd=d.recharge; G.grid[r][c]=makePlant(s.key,r,c); sfx('plant'); }
+        else netSend({t:'input',a:'plant',key:s.key,r,c});
+        G.selected=null; return true;
+      }
     }
   }
+  return false;
+}
+function overLawn(x,y){ return x>=GRID_X && x<GRID_R && y>=GRID_Y && y<GRID_Y+ROWS*CELL_H; }
+
+// pointer-down during play: handle buttons/sun/shovel immediately, and ARM a drag if a card was grabbed
+let dragArmed=false, dragMoved=false, downX=0, downY=0;
+function gameplayDown(x,y){
+  audioInit(); downX=x; downY=y; dragArmed=false; dragMoved=false;
+  if(gameControlButtons(x,y)) return;
+  if(shovelButtonAt(x,y)) return;
+  const card=cardAt(x,y);
+  if(card){
+    if(card.kind==='plant'){ if(selectPlantCard(card.i)) dragArmed=true; }
+    else { selectZombieCard(card.i); dragArmed=true; }
+    return;
+  }
+  if(collectSunAt(x,y)) return;
+  // otherwise this may become a tap-to-place on the lawn (handled on pointer-up)
+}
+function gameplayUp(x,y){
+  if(dragArmed && dragMoved){                 // a real drag from a card -> drop it
+    if(overLawn(x,y)) placeAtLawn(x,y);        // released off-lawn keeps the card selected for click-to-place
+    dragArmed=false; dragMoved=false; return;
+  }
+  const moved = Math.abs(x-downX)>8 || Math.abs(y-downY)>8;
+  if(!moved && overLawn(x,y)) placeAtLawn(x,y);// simple tap on the lawn with a card already selected
+  dragArmed=false; dragMoved=false;
 }
 
 /* ============================================================
@@ -2293,15 +2399,23 @@ function canvasPos(e){
   const r=cv.getBoundingClientRect();
   return { x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height) };
 }
-cv.addEventListener('mousemove', e=>{ mouse=canvasPos(e); });
+cv.addEventListener('pointermove', e=>{ mouse=canvasPos(e);
+  if(dragArmed && (Math.abs(mouse.x-downX)>6||Math.abs(mouse.y-downY)>6)) dragMoved=true; });
+cv.addEventListener('pointerdown', e=>{
+  if((state==='playing'||state==='mp_playing') && !paused){ mouse=canvasPos(e); gameplayDown(mouse.x,mouse.y); }
+});
+cv.addEventListener('pointerup', e=>{
+  if((state==='playing'||state==='mp_playing') && !paused){ const p=canvasPos(e); gameplayUp(p.x,p.y); }
+});
 cv.addEventListener('click', e=>{
+  // gameplay (when not paused) is driven by pointerdown/up above — skip it here
+  if((state==='playing'||state==='mp_playing') && !paused) return;
   audioInit(); // browsers only allow audio after a user gesture
   const {x,y}=canvasPos(e);
   if(state==='home'){ handleHomeClick(x,y); return; }
   if(state==='lobby'){ handleLobbyClick(x,y); return; }
   if(state==='mp_wait'){ if(x>=W/2-85&&x<=W/2+85&&y>=H/2+46&&y<=H/2+94) leaveVersus(); return; }
-  if(state==='mp_playing'){ handleVersusClick(x,y); return; }
-  if(state==='mp_over'){ if(x>=W/2-95&&x<=W/2+95&&y>=H/2+48&&y<=H/2+98) leaveVersus(); return; }
+  if(state==='mp_over'){ for(const b of VS_OVER_BTNS) if(hit(b,x,y)){ if(b.act==='again') versusRematch(); else leaveVersus(); } return; }
   if(state==='menu'){
     const mb = MENU_MUSIC_BTN;
     if(MENU_HOME_BTN && hit(MENU_HOME_BTN,x,y)){ mode='solo'; state='home'; return; }
