@@ -1651,7 +1651,7 @@ function drawMenu(){
     const w=440, h=48;
     const x = two ? (j<5 ? W/2-455 : W/2+15) : W/2-220;
     const y = 348+(j%5)*58;
-    const open = i < unlocked;
+    const open = true;   // all levels unlocked — pick any level freely
     const hov = open && mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
     if(ASSETS.button_wide){
       ctx.save();
