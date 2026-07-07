@@ -2296,21 +2296,29 @@ function drawVersusHUD(){
 }
 function drawVersusGhost(){
   const canP=(mySide==='plants'||netRole==='local'), canZ=(mySide==='zombies'||netRole==='local');
+  const c=Math.floor((mouse.x-GRID_X)/CELL_W), r=Math.floor((mouse.y-GRID_Y)/CELL_H);
+  const onLawn = mouse.x>=GRID_X && mouse.x<GRID_R && mouse.y>=GRID_Y && mouse.y<GRID_Y+ROWS*CELL_H;
   if(canZ && G.zselected!=null){
-    const r=Math.floor((mouse.y-GRID_Y)/CELL_H);
-    // subtle highlight of the target row only while the cursor is over the lawn
-    if(r>=0&&r<ROWS && mouse.x>=GRID_X && mouse.x<GRID_R){
-      ctx.save(); ctx.globalAlpha=.12; ctx.fillStyle='#b48ad4'; ctx.fillRect(GRID_X,cellY(r),COLS*CELL_W,CELL_H);
-      ctx.globalAlpha=.5; ctx.strokeStyle='#d8a0ff'; ctx.lineWidth=2; ctx.strokeRect(GRID_X+1,cellY(r)+1,COLS*CELL_W-2,CELL_H-2); ctx.restore();
-    }
-    // the zombie ghost follows the cursor/finger (drag-and-drop), not pinned to the floor
-    ctx.save(); ctx.globalAlpha=.62; ctx.translate(mouse.x,mouse.y); ctx.scale(1.15,1.15);
-    drawZombieIcon(G.zseeds[G.zselected].key,0,0); ctx.restore();
+    // highlight the whole target LANE (zombies march in from the right of that row)
+    if(onLawn){ ctx.save(); ctx.globalAlpha=.13; ctx.fillStyle='#b48ad4'; ctx.fillRect(GRID_X,cellY(r),COLS*CELL_W,CELL_H);
+      ctx.globalAlpha=.55; ctx.strokeStyle='#d8a0ff'; ctx.lineWidth=2; ctx.strokeRect(GRID_X+1,cellY(r)+1,COLS*CELL_W-2,CELL_H-2); ctx.restore(); }
+    // ghost uses the REAL zombie art (same sprite you see on the lawn), following the cursor — just like the plant ghost
+    const key=G.zseeds[G.zselected].key, zim=ASSETS['zombie_'+key]||ASSETS.zombie_normal;
+    ctx.save(); ctx.globalAlpha=.62; ctx.translate(mouse.x,mouse.y);
+    if(zim) ctx.drawImage(zim,-46,-72,92,116); else { ctx.scale(1.3,1.3); drawZombieIcon(key,0,0); }
+    ctx.restore();
     return;
   }
   if(canP){
-    if(G.selected!=null){ const s=G.seeds[G.selected]; ctx.save(); ctx.globalAlpha=.55; ctx.translate(mouse.x,mouse.y);
-      drawPlant({key:s.key,hp:1,maxHp:1,t:0,wob:0,armT:0,chewT:0,fuse:1},0,0); ctx.restore(); }
+    if(G.selected!=null){
+      // highlight the target CELL (plants drop into a single tile) — the plant-side mirror of the lane highlight
+      if(onLawn && r>=0&&r<ROWS&&c>=0&&c<COLS && !G.grid[r][c] && !graveAt(r,c)){
+        ctx.save(); ctx.globalAlpha=.18; ctx.fillStyle='#8fd44a'; ctx.fillRect(cellX(c),cellY(r),CELL_W,CELL_H);
+        ctx.globalAlpha=.55; ctx.strokeStyle='#bfff8a'; ctx.lineWidth=2; ctx.strokeRect(cellX(c)+1,cellY(r)+1,CELL_W-2,CELL_H-2); ctx.restore();
+      }
+      const s=G.seeds[G.selected]; ctx.save(); ctx.globalAlpha=.62; ctx.translate(mouse.x,mouse.y);
+      drawPlant({key:s.key,hp:1,maxHp:1,t:0,wob:0,armT:0,chewT:0,fuse:1},0,0); ctx.restore();
+    }
     else if(G.shovel){ ctx.save(); ctx.globalAlpha=.75; ctx.translate(mouse.x,mouse.y); ctx.rotate(.6);
       ctx.strokeStyle='#8a5a2a'; ctx.lineWidth=6; ctx.beginPath(); ctx.moveTo(0,-20); ctx.lineTo(0,8); ctx.stroke();
       ctx.fillStyle='#9aa4ad'; ctx.beginPath(); ctx.moveTo(-8,8); ctx.lineTo(8,8); ctx.lineTo(0,24); ctx.closePath(); ctx.fill(); ctx.restore(); }
@@ -2430,8 +2438,13 @@ function gameplayDown(x,y){
   if(shovelButtonAt(x,y)) return;
   const card=cardAt(x,y);
   if(card){
-    if(card.kind==='plant'){ if(selectPlantCard(card.i)) dragArmed=true; }
-    else { selectZombieCard(card.i); dragArmed=true; }
+    if(card.kind==='plant'){
+      if(G.selected===card.i){ G.selected=null; }            // tap the selected plant again to deselect
+      else if(selectPlantCard(card.i)) dragArmed=true;
+    } else {
+      if(G.zselected===card.i){ G.zselected=null; }           // same toggle for zombie cards
+      else { selectZombieCard(card.i); dragArmed=true; }
+    }
     return;
   }
   if(collectSunAt(x,y)) return;
