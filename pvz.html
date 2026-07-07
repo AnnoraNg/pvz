@@ -23,7 +23,8 @@ const W = cv.width, H = cv.height;
 
 // ---- Sprite assets (optional; game falls back to vector art if missing) ----
 const ASSETS = {};
-[
+let assetsDone = 0;                 // how many images have finished (loaded OR failed)
+const ASSET_NAMES = [
   'background','sun','pea','frozenpea','mower','shovel',
   'sunflower','peashooter','snowpea','repeater','wallnut','wallnut_cracked1','wallnut_cracked2',
   'cherrybomb','potatomine_buried','potatomine_armed','chomper','chomper_chewing',
@@ -37,12 +38,104 @@ const ASSETS = {};
   'minibtn','minibtn_active','icon_pause','icon_play','icon_sound_on','icon_sound_off','lock','card','panel','trophy','defeat',
   // versus (2-player) zombie-side HUD — optional; falls back to drawn art if missing
   'zombie_hud_bar','zombie_card','brain_panel','brain_icon','income_btn'
-].forEach(n=>{
+];
+const ASSET_TOTAL = ASSET_NAMES.length;
+ASSET_NAMES.forEach(n=>{
   const im = new Image();
-  im.onload = ()=>{ ASSETS[n]=im; };
-  im.onerror = ()=>{};
+  im.onload = ()=>{ ASSETS[n]=im; assetsDone++; };
+  im.onerror = ()=>{ assetsDone++; };   // count failures too, so a missing file can't stall the loader
   im.src = 'assets/'+n+'.png';
 });
+// wait for the art before showing the game, so we never flash the raw fallback look;
+// a 6s cap means a slow/failed asset can't leave you stuck on the loading screen forever.
+const LOAD_START = (window.performance&&performance.now)?performance.now():Date.now();
+function assetsReady(){
+  const t=(window.performance&&performance.now)?performance.now():Date.now();
+  return assetsDone>=ASSET_TOTAL || (t-LOAD_START)>6000;
+}
+// Fully hand-drawn (no image files) so it appears on the very first frame, then
+// animates while the sprite art downloads in the background.
+const LOAD_TIPS = [
+  'Sunflowers first — sun is your economy.',
+  'Wall-nuts buy your shooters time.',
+  'Tip: in 2-player, one of you commands the zombies!',
+  'Snow Peas slow the horde to a crawl.',
+  'Plant Potato Mines ahead of the zombies.',
+];
+function drawLoadSunflower(x,y,t){
+  const bob=Math.sin(t*2)*4;
+  ctx.save(); ctx.translate(x,y+bob);
+  ctx.strokeStyle='#3f7a2b'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(0,62); ctx.lineTo(0,4); ctx.stroke();
+  ctx.fillStyle='#4e9b34'; ctx.beginPath(); ctx.ellipse(-16,42,13,6,-0.6,0,7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(16,50,12,6,0.6,0,7); ctx.fill();
+  for(let i=0;i<12;i++){ ctx.save(); ctx.rotate(i*Math.PI/6 + Math.sin(t*1.5)*0.06);
+    ctx.fillStyle='#ffd42a'; ctx.beginPath(); ctx.ellipse(0,-30,9,17,0,0,7); ctx.fill(); ctx.restore(); }
+  ctx.fillStyle='#c98a2c'; ctx.beginPath(); ctx.arc(0,0,18,0,7); ctx.fill();
+  ctx.fillStyle='#2a2a2a'; ctx.beginPath(); ctx.arc(-6,-3,2.8,0,7); ctx.fill(); ctx.beginPath(); ctx.arc(6,-3,2.8,0,7); ctx.fill();
+  ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=2.4; ctx.beginPath(); ctx.arc(0,4,7,0.12*Math.PI,0.88*Math.PI); ctx.stroke();
+  ctx.restore();
+}
+function drawLoadZombie(x,y,t){
+  const step=Math.sin(t*4)*4, lean=Math.sin(t*4)*0.05;
+  ctx.save(); ctx.translate(x,y); ctx.rotate(-0.06+lean);
+  ctx.strokeStyle='#4a4a52'; ctx.lineWidth=8;
+  ctx.beginPath(); ctx.moveTo(-4,20); ctx.lineTo(-8+step,54); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(6,20); ctx.lineTo(10-step,54); ctx.stroke();
+  ctx.fillStyle='#5b5b66'; ctx.beginPath(); ctx.ellipse(0,0,18,24,0,0,7); ctx.fill();
+  ctx.strokeStyle='#6b6b78'; ctx.lineWidth=8; ctx.beginPath(); ctx.moveTo(-6,-6); ctx.lineTo(-32,-2+step); ctx.stroke();
+  ctx.fillStyle='#8fa06a'; ctx.beginPath(); ctx.arc(-6,-34,15,0,7); ctx.fill();
+  ctx.fillStyle='#2a2a2a'; ctx.beginPath(); ctx.arc(-12,-36,2.4,0,7); ctx.fill(); ctx.beginPath(); ctx.arc(-2,-36,2.4,0,7); ctx.fill();
+  ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-14,-26); ctx.lineTo(-2,-28); ctx.stroke();
+  ctx.restore();
+}
+function drawLoading(){
+  const now=(window.performance&&performance.now)?performance.now():Date.now();
+  const t=(now-LOAD_START)/1000;
+  const p=Math.min(1, assetsDone/ASSET_TOTAL);
+  // sky + ground
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#79bfe8'); g.addColorStop(.55,'#a8d8ef'); g.addColorStop(.56,'#5fa038'); g.addColorStop(1,'#37611f');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const gy=H*0.56;
+  for(let c=0;c<12;c++){ ctx.fillStyle=(c%2)?'rgba(0,0,0,.06)':'rgba(255,255,255,.05)'; ctx.fillRect(c*(W/12),gy,W/12,H-gy); }
+  // drifting clouds
+  ctx.fillStyle='rgba(255,255,255,.5)';
+  for(let i=0;i<3;i++){ const cx=((t*14+i*380)% (W+240))-120, cy=70+i*34;
+    ctx.beginPath(); ctx.arc(cx,cy,22,0,7); ctx.arc(cx+26,cy+6,26,0,7); ctx.arc(cx+56,cy,20,0,7); ctx.fill(); }
+  // rotating sun
+  ctx.save(); ctx.translate(W/2,128);
+  ctx.fillStyle='rgba(255,205,50,.85)';
+  for(let i=0;i<12;i++){ ctx.save(); ctx.rotate(t*0.5+i*Math.PI/6); ctx.beginPath(); ctx.moveTo(-8,-52); ctx.lineTo(8,-52); ctx.lineTo(0,-74); ctx.closePath(); ctx.fill(); ctx.restore(); }
+  const sg=ctx.createRadialGradient(0,0,6,0,0,46); sg.addColorStop(0,'#fff7ae'); sg.addColorStop(.7,'#ffd42a'); sg.addColorStop(1,'#f5b301');
+  ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(0,0,46,0,7); ctx.fill(); ctx.restore();
+  // title
+  ctx.textAlign='center';
+  ctx.font='bold 72px Trebuchet MS'; ctx.lineWidth=8; ctx.strokeStyle='rgba(0,0,0,.35)';
+  ctx.strokeText('PLANTS', W/2, 250); ctx.fillStyle='#8fd44a'; ctx.fillText('PLANTS', W/2, 250);
+  ctx.font='bold 26px Trebuchet MS'; ctx.strokeStyle='rgba(0,0,0,.3)'; ctx.lineWidth=5;
+  ctx.strokeText('vs.', W/2, 286); ctx.fillStyle='#fff'; ctx.fillText('vs.', W/2, 286);
+  ctx.font='bold 72px Trebuchet MS'; ctx.lineWidth=8; ctx.strokeStyle='rgba(0,0,0,.35)';
+  ctx.strokeText('ZOMBIES', W/2, 346); ctx.fillStyle='#b48ad4'; ctx.fillText('ZOMBIES', W/2, 346);
+  // characters: sunflower stands guard, zombie shambles closer as the bar fills
+  drawLoadSunflower(250, gy+66, t);
+  drawLoadZombie(W-250 - p*140, gy+82, t);
+  // progress bar (wood frame + gradient fill + moving shine)
+  const bw=460,bh=24,bx=W/2-bw/2,by=H-104;
+  ctx.fillStyle='#3a2a16'; roundRect(bx-6,by-6,bw+12,bh+12,14); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,.4)'; roundRect(bx,by,bw,bh,10); ctx.fill();
+  ctx.save(); roundRect(bx,by,bw,bh,10); ctx.clip();
+  const fg=ctx.createLinearGradient(0,by,0,by+bh); fg.addColorStop(0,'#c2f877'); fg.addColorStop(1,'#5fae2e');
+  ctx.fillStyle=fg; ctx.fillRect(bx,by,bw*p,bh);
+  const shx=bx+((t*180)%(bw+120))-60;
+  const sh=ctx.createLinearGradient(shx-34,0,shx+34,0); sh.addColorStop(0,'rgba(255,255,255,0)'); sh.addColorStop(.5,'rgba(255,255,255,.4)'); sh.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=sh; ctx.fillRect(bx,by,bw,bh); ctx.restore();
+  // labels
+  ctx.fillStyle='#fff'; ctx.font='bold 16px Trebuchet MS';
+  ctx.fillText('Growing the lawn…  '+Math.round(p*100)+'%', W/2, by+bh+28);
+  ctx.fillStyle='rgba(255,255,255,.8)'; ctx.font='14px Trebuchet MS';
+  ctx.fillText(LOAD_TIPS[Math.floor(t/2.6)%LOAD_TIPS.length], W/2, by+bh+52);
+  ctx.textAlign='left';
+}
 function plantSprite(p,dmg){
   switch(p.key){
     case 'sunshroom':  return (p.age||0)>60?'sunshroom_big':'sunshroom';
@@ -933,6 +1026,7 @@ function updateMowers(dt){
    Drawing
    ============================================================ */
 function draw(){
+  if(!assetsReady()){ drawLoading(); return; }   // hold on a loading screen until the art is in
   ctx.save();
   if(shake>0) ctx.translate(rnd(-4,4)*shake*3, rnd(-4,4)*shake*3);
 
