@@ -2044,6 +2044,7 @@ let lobbyLevel=0;
 let netCode='';
 let lastSnap=0;
 let connectTimer=null;
+let lastRecv=0;              // timestamp of the last message from the peer (stale-connection watchdog)
 const LOBBY_BTNS=[];
 
 // ICE servers: STUN helps peers discover their public address; TURN relays the
@@ -2116,22 +2117,25 @@ function leaveVersus(){
 }
 
 function onNetData(d){
-  if(!d||!d.t) return;
-  if(d.t==='setup'){                 // guest learns its side + level
-    mySide=d.guestSide; lobbyLevel=d.level; levelIdx=d.level;
-    if(mySide==='plants'){ chooseLevelIdx=d.level; chosen=LEVELS[d.level].plants.slice(0,MAXSLOTS); state='mp_choose'; }
-    else { state='mp_wait'; netStatus='Waiting for the plant player to choose…'; }
-  } else if(d.t==='seeds'){          // host(zombies) got the plant player's loadout -> begin
-    if(netRole==='host' && hostSide==='zombies'){ newVersus(lobbyLevel, d.seeds); netSend({t:'start', level:lobbyLevel, seeds:d.seeds}); }
-  } else if(d.t==='start'){          // guest begins rendering; host runs the sim
-    newVersus(d.level, d.seeds);
-  } else if(d.t==='state'){          // guest applies host snapshot
-    if(netRole==='guest' && G) applySnapshot(d.s);
-  } else if(d.t==='input'){          // host applies guest intent
-    if(netRole==='host') applyGuestInput(d);
-  } else if(d.t==='over'){
-    if(netRole==='guest'){ if(G) G.winner=d.winner; state='mp_over'; sfx(d.winner==='plants'?'win':'lose'); }
-  }
+  try{
+    if(!d||!d.t) return;
+    lastRecv = (window.performance&&performance.now)?performance.now():Date.now();  // heartbeat for the stale-connection watchdog
+    if(d.t==='setup'){                 // guest learns its side + level
+      mySide=d.guestSide; lobbyLevel=d.level; levelIdx=d.level;
+      if(mySide==='plants'){ chooseLevelIdx=d.level; chosen=LEVELS[d.level].plants.slice(0,MAXSLOTS); state='mp_choose'; }
+      else { state='mp_wait'; netStatus='Waiting for the plant player to choose…'; }
+    } else if(d.t==='seeds'){          // host(zombies) got the plant player's loadout -> begin
+      if(netRole==='host' && hostSide==='zombies'){ newVersus(lobbyLevel, d.seeds); netSend({t:'start', level:lobbyLevel, seeds:d.seeds}); }
+    } else if(d.t==='start'){          // guest begins rendering; host runs the sim
+      newVersus(d.level, d.seeds);
+    } else if(d.t==='state'){          // guest applies host snapshot
+      if(netRole==='guest' && G) applySnapshot(d.s);
+    } else if(d.t==='input'){          // host applies guest intent
+      if(netRole==='host') applyGuestInput(d);
+    } else if(d.t==='over'){
+      if(netRole==='guest'){ if(G) G.winner=d.winner; state='mp_over'; sfx(d.winner==='plants'?'win':'lose'); }
+    }
+  }catch(e){ /* never let a single bad message break the client */ }
 }
 function applyGuestInput(m){
   if(!G||!G.versus||state!=='mp_playing') return;
@@ -2184,6 +2188,9 @@ function applySnapshot(s){
 // Snapshots then gently correct these estimates when they arrive.
 function guestTick(dt){
   if(!G) return;
+  // if the host's stream has been silent too long, end cleanly rather than hang forever
+  const now=(window.performance&&performance.now)?performance.now():Date.now();
+  if(lastRecv && now-lastRecv>12000){ G.winner=G.winner||'draw'; netStatus='Connection lost'; state='mp_over'; return; }
   if(G.matchTime>0) G.matchTime -= dt;
   if(G.spawnGrace>0) G.spawnGrace -= dt;
   if(G.gspawnCd>0) G.gspawnCd -= dt;
@@ -2384,6 +2391,17 @@ function drawVersusHUD(){
     ctx.textAlign='center'; ctx.fillStyle='#ffd42a'; ctx.font='bold 15px Trebuchet MS';
     ctx.fillText('Zombies release in '+Math.ceil(G.spawnGrace)+'s', W/2, showP ? H-100 : 104);
     ctx.textAlign='left';
+  }
+  // watchdog: if the guest stops receiving host snapshots, show a banner instead of a silent freeze
+  if(netRole==='guest'){
+    const now=(window.performance&&performance.now)?performance.now():Date.now();
+    if(lastRecv && now-lastRecv>3000){
+      ctx.save(); ctx.textAlign='center';
+      ctx.fillStyle='rgba(0,0,0,.72)'; roundRect(W/2-230,H/2-26,460,52,12); ctx.fill();
+      ctx.fillStyle='#ffd24a'; ctx.font='bold 17px Trebuchet MS';
+      ctx.fillText('Connection lag — waiting for the host…', W/2, H/2+5);
+      ctx.restore(); ctx.textAlign='left';
+    }
   }
 }
 function drawVersusGhost(){
@@ -2691,17 +2709,19 @@ window.addEventListener('keydown', e=>{
    ============================================================ */
 let last = performance.now();
 function loop(now){
-  const dt = clamp((now-last)/1000, 0, 0.05);
-  last = now;
-  // run the sim multiple times per frame for fast-forward (keeps physics exact)
-  for(let i=0;i<gameSpeed;i++) update(dt);
-  // guest smooths motion + clocks locally between host snapshots
-  if(netRole==='guest' && state==='mp_playing') guestTick(dt);
-  // host streams authoritative state to the guest (~15 Hz — lighter payload, less lag)
-  if(netRole==='host' && conn && conn.open && (state==='mp_playing'||state==='mp_over') && now-lastSnap>66){
-    lastSnap = now; netSend({t:'state', s:serializeState()});
-  }
-  draw();
+  // Everything runs inside try/catch and requestAnimationFrame is ALWAYS re-scheduled,
+  // so a single bad frame (a malformed snapshot, a transient error) can never freeze the
+  // screen — the loop keeps going and the next good snapshot self-heals the state.
+  try{
+    const dt = clamp((now-last)/1000, 0, 0.05);
+    last = now;
+    for(let i=0;i<gameSpeed;i++) update(dt);
+    if(netRole==='guest' && state==='mp_playing') guestTick(dt);
+    if(netRole==='host' && conn && conn.open && (state==='mp_playing'||state==='mp_over') && now-lastSnap>66){
+      lastSnap = now; netSend({t:'state', s:serializeState()});
+    }
+    draw();
+  }catch(e){ try{ console.error('frame error (recovered):', e); }catch(_){} }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
